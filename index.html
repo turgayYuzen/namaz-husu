@@ -37,7 +37,6 @@ function loadScript(src) {
   });
 }
 
-// İrisin göz köşelerine göre göreli konumu → baş hareketi iptal edilir
 function getNormalizedGaze(lm) {
   function eyeRelative(irisIdx, outerIdx, innerIdx, topIdx, botIdx) {
     const iris = lm[irisIdx], outer = lm[outerIdx], inner = lm[innerIdx];
@@ -67,11 +66,12 @@ function App() {
   const [statusTitle, setStatusTitle] = useState("Kamera bekleniyor...");
   const [statusSub, setStatusSub]     = useState("");
   const [sensitivity, setSensitivity] = useState(5);
+  const [brightness, setBrightness]   = useState(100); // 0=tam karanlık, 100=normal
   const [noFace, setNoFace]           = useState(false);
   const [flashActive, setFlashActive] = useState(false);
   const [calibPct, setCalibPct]       = useState(0);
   const [camError, setCamError]       = useState("");
-  const [countdown, setCountdown]     = useState(0); // geri sayım: 3,2,1,0
+  const [countdown, setCountdown]     = useState(0);
 
   const videoRef       = useRef(null);
   const streamRef      = useRef(null);
@@ -91,7 +91,6 @@ function App() {
   modeRef.current        = mode;
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
 
-  // ── UYARI ──────────────────────────────────────────────────────────────────
   const stopAlert = useCallback(() => {
     flashOn.current = false;
     setFlashActive(false);
@@ -114,7 +113,6 @@ function App() {
     }
   }, []);
 
-  // ── KALİBRASYON SIFIRLA ────────────────────────────────────────────────────
   const resetCalib = useCallback(() => {
     baselineRef.current = null; calibFrames.current = []; isDistracted.current = false;
     stopAlert(); setCalibPct(0); setNoFace(false);
@@ -123,7 +121,6 @@ function App() {
     setStatusSub("Secde noktasına bakın");
   }, [stopAlert]);
 
-  // ── MEDIAPIPE SONUÇLARI ─────────────────────────────────────────────────────
   const onResults = useCallback((results) => {
     if (!mountedRef.current) return;
     if (!results.multiFaceLandmarks?.length) {
@@ -155,8 +152,8 @@ function App() {
       return;
     }
 
-    // Hassasiyet 10 = çok hassas (küçük eşik), 1 = az hassas (büyük eşik)
-    const thr  = 0.065 + (10 - sensitivityRef.current) * 0.015; // 10→0.065, 1→0.20
+    // 10=çok hassas (küçük eşik), 1=az hassas (büyük eşik)
+    const thr  = 0.065 + (10 - sensitivityRef.current) * 0.015;
     const dist = Math.abs(gaze.x - baselineRef.current.x) > thr ||
                  Math.abs(gaze.y - baselineRef.current.y) > thr;
 
@@ -171,7 +168,6 @@ function App() {
     }
   }, [startAlert, stopAlert]);
 
-  // ── MEDIAPIPE BAŞLAT ────────────────────────────────────────────────────────
   const initMediaPipe = useCallback(async (videoEl) => {
     setStatusTitle("Model yükleniyor..."); setStatusSub("Lütfen bekleyin");
     try {
@@ -192,7 +188,6 @@ function App() {
     }
   }, [onResults]);
 
-  // ── KAMERAYI AÇ ─────────────────────────────────────────────────────────────
   const startCamera = useCallback(async () => {
     if (!videoRef.current) return;
     setCamError(""); setNoFace(false);
@@ -214,7 +209,6 @@ function App() {
     }
   }, [initMediaPipe]);
 
-  // ── DURDUR ──────────────────────────────────────────────────────────────────
   const stopApp = useCallback(() => {
     stopAlert();
     mpCamRef.current?.stop(); mpCamRef.current = null; faceMeshRef.current = null;
@@ -224,7 +218,6 @@ function App() {
     setCalibPct(0); setNoFace(false); setCamError(""); setScreen("setup");
   }, [stopAlert]);
 
-  // ── GERİ SAYIM ile BAŞLAT ───────────────────────────────────────────────────
   const handleStart = useCallback(() => {
     setCountdown(3);
     let c = 3;
@@ -249,17 +242,15 @@ function App() {
       {/* ══════════════════ SETUP ══════════════════ */}
       {screen === "setup" && (
         <div style={{ minHeight:"100vh", display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center",
-          padding:"40px 24px", gap:24, background:"radial-gradient(ellipse at 30% 20%,#1a2e22,#0a0e0c 65%)", animation:"fadeIn .4s ease",
-          position:"relative", overflow:"hidden" }}>
+          padding:"40px 24px", gap:24, background:"radial-gradient(ellipse at 30% 20%,#1a2e22,#0a0e0c 65%)",
+          animation:"fadeIn .4s ease", position:"relative", overflow:"hidden" }}>
 
-          {/* Geri sayım overlay */}
           {countdown > 0 && (
             <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.85)", zIndex:50,
               display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:16 }}>
               <div style={{ fontSize:11, letterSpacing:3, color:"#6b8f75", textTransform:"uppercase" }}>Hazırlanın</div>
               <div key={countdown} style={{ fontSize:120, fontWeight:700, color:"#52b788",
-                textShadow:"0 0 40px rgba(82,183,136,0.6)", lineHeight:1,
-                animation:"countPop .4s ease-out" }}>{countdown}</div>
+                textShadow:"0 0 40px rgba(82,183,136,0.6)", lineHeight:1, animation:"countPop .4s ease-out" }}>{countdown}</div>
               <div style={{ fontSize:14, color:"rgba(255,255,255,0.5)" }}>Secde noktasına bakın</div>
             </div>
           )}
@@ -273,7 +264,6 @@ function App() {
 
           <div style={{ width:60, height:1, background:"linear-gradient(90deg,transparent,#52b788,transparent)" }} />
 
-          {/* Mod kartları */}
           <div style={{ width:"100%", maxWidth:400 }}>
             <div style={{ fontSize:12, color:"#6b8f75", letterSpacing:2, textTransform:"uppercase", marginBottom:12 }}>Kamera Modu</div>
             {[
@@ -303,7 +293,6 @@ function App() {
             ))}
           </div>
 
-          {/* İpucu */}
           <div style={{ width:"100%", maxWidth:400, background:"rgba(183,149,11,.08)",
             border:"1px solid rgba(183,149,11,.22)", borderRadius:14, padding:"14px 18px" }}>
             <div style={{ fontSize:12, color:"#d4ac0d", fontWeight:600, marginBottom:6 }}>💡 Nasıl Kullanılır?</div>
@@ -314,7 +303,6 @@ function App() {
             </div>
           </div>
 
-          {/* Başlat butonu */}
           <button onClick={handleStart} disabled={countdown > 0} style={{
             width:"100%", maxWidth:400, padding:18,
             background: countdown > 0 ? "#1e2e24" : "linear-gradient(135deg,#2d6a4f,#40916c)",
@@ -330,9 +318,14 @@ function App() {
       {/* ══════════════════ CAMERA ══════════════════ */}
       {screen === "camera" && (
         <div style={{ position:"fixed", inset:0, background:"#000" }}>
+
+          {/* Kamera görüntüsü — brightness filtresi ile karartılabilir */}
           <video ref={videoRef} autoPlay playsInline muted style={{
             position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover",
-            transform: mode==="front" ? "scaleX(-1)" : "scaleX(1)" }} />
+            transform: mode==="front" ? "scaleX(-1)" : "scaleX(1)",
+            filter: `brightness(${brightness}%)`,
+            transition: "filter .1s"
+          }} />
 
           {/* Üst bar */}
           <div style={{ position:"absolute", top:0, left:0, right:0, padding:"48px 20px 16px",
@@ -349,7 +342,7 @@ function App() {
             <div onClick={resetCalib} style={{ width:42, height:42, borderRadius:"50%",
               background:"rgba(255,255,255,.15)", border:"1px solid rgba(255,255,255,.2)",
               display:"flex", alignItems:"center", justifyContent:"center",
-              fontSize:18, cursor:"pointer" }} title="Yeniden kalibre et">🎯</div>
+              fontSize:18, cursor:"pointer" }}>🎯</div>
           </div>
 
           {/* Kamera hatası */}
@@ -407,8 +400,10 @@ function App() {
           {/* Alt panel */}
           <div style={{ position:"absolute", bottom:0, left:0, right:0, padding:"20px 20px 44px",
             background:"linear-gradient(to top,rgba(0,0,0,.92),transparent)", zIndex:10 }}>
+
+            {/* Durum göstergesi */}
             <div style={{ display:"flex", alignItems:"center", gap:14, background:"rgba(0,0,0,.55)",
-              borderRadius:16, padding:"16px 18px", border:"1px solid rgba(255,255,255,.08)", marginBottom:16 }}>
+              borderRadius:16, padding:"16px 18px", border:"1px solid rgba(255,255,255,.08)", marginBottom:14 }}>
               <div style={{ width:14, height:14, borderRadius:"50%", flexShrink:0, background:dotColor,
                 boxShadow:`0 0 10px ${dotColor}`, animation:`${statusType==="distracted"?"pulsefast .5s":"pulse 2s"} infinite` }} />
               <div style={{ flex:1 }}>
@@ -416,11 +411,21 @@ function App() {
                 <div style={{ fontSize:12, color:"rgba(255,255,255,.5)", marginTop:2 }}>{statusSub}</div>
               </div>
             </div>
-            <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-              <span style={{ fontSize:11, color:"rgba(255,255,255,.4)", whiteSpace:"nowrap" }}>Az Hassas</span>
+
+            {/* Hassasiyet */}
+            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:10 }}>
+              <span style={{ fontSize:11, color:"rgba(255,255,255,.35)", whiteSpace:"nowrap", width:64, textAlign:"right" }}>Az Hassas</span>
               <input type="range" min={1} max={10} value={sensitivity} onChange={e => setSensitivity(+e.target.value)} />
-              <span style={{ fontSize:11, color:"rgba(255,255,255,.4)", whiteSpace:"nowrap" }}>Çok Hassas</span>
+              <span style={{ fontSize:11, color:"rgba(255,255,255,.35)", whiteSpace:"nowrap", width:64 }}>Çok Hassas</span>
             </div>
+
+            {/* Karartma */}
+            <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+              <span style={{ fontSize:16, whiteSpace:"nowrap", width:64, textAlign:"right" }}>🌑</span>
+              <input type="range" min={0} max={100} value={brightness} onChange={e => setBrightness(+e.target.value)} />
+              <span style={{ fontSize:16, whiteSpace:"nowrap", width:64 }}>☀️</span>
+            </div>
+
           </div>
         </div>
       )}
