@@ -8,24 +8,23 @@
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <style>
-  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; margin: 0; padding: 0; }
-  body { background: #0a0e0c; font-family: 'Tajawal','Segoe UI',sans-serif; color: #e8f5ee; }
-  input[type=range] { -webkit-appearance:none; height:4px; border-radius:2px; background:rgba(255,255,255,.2); outline:none; width:100%; }
-  input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:20px; height:20px; border-radius:50%; background:#52b788; box-shadow:0 0 8px rgba(82,183,136,.6); }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; margin:0; padding:0; }
+  body { background:#0a0e0c; font-family:'Tajawal','Segoe UI',sans-serif; color:#e8f5ee; }
   @import url('https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Tajawal:wght@300;400;500;700&display=swap');
   @keyframes flashPulse { 0%,100%{opacity:0} 50%{opacity:1} }
   @keyframes pulse      { 0%,100%{opacity:1} 50%{opacity:.4} }
   @keyframes pulsefast  { 0%,100%{opacity:1} 50%{opacity:.2} }
   @keyframes bounce     { 0%,100%{transform:translateY(0)} 50%{transform:translateY(5px)} }
   @keyframes fadeIn     { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+  input[type=range]                        { -webkit-appearance:none; height:4px; border-radius:2px; background:rgba(255,255,255,.2); outline:none; width:100%; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:20px; height:20px; border-radius:50%; background:#52b788; box-shadow:0 0 8px rgba(82,183,136,.6); }
 </style>
 </head>
 <body>
 <div id="root"></div>
-
 <script type="text/babel">
 const { useState, useRef, useCallback, useEffect } = React;
-const CALIB_NEEDED = 40;
+const CALIB_NEEDED = 60;
 
 function loadScript(src) {
   return new Promise((resolve, reject) => {
@@ -37,12 +36,42 @@ function loadScript(src) {
   });
 }
 
+// ─── Baş açısından arındırılmış göz yönü ─────────────────────────────────────
+// İrisin, göz köşelerine ve kapak sınırlarına göre GÖRELI konumunu hesapla.
+// Baş döndüğünde göz köşeleri de döner → oran sabit kalır → sadece göz hareketi yakalanır.
+function getNormalizedGaze(lm) {
+  function eyeRelative(irisIdx, outerIdx, innerIdx, topIdx, botIdx) {
+    const iris  = lm[irisIdx];
+    const outer = lm[outerIdx];
+    const inner = lm[innerIdx];
+    const top   = lm[topIdx];
+    const bot   = lm[botIdx];
+    const w = Math.hypot(inner.x - outer.x, inner.y - outer.y);
+    const h = Math.hypot(top.x  - bot.x,   top.y  - bot.y);
+    if (w < 0.001 || h < 0.001) return null;
+    const cx = (outer.x + inner.x) / 2;
+    const cy = (top.y   + bot.y)   / 2;
+    return { x: (iris.x - cx) / w, y: (iris.y - cy) / h };
+  }
+  const L = eyeRelative(468, 33,  133, 159, 145);
+  const R = eyeRelative(473, 362, 263, 386, 374);
+  if (!L || !R) return null;
+  return { x: (L.x + R.x) / 2, y: (L.y + R.y) / 2 };
+}
+
+function eyeOpenRatio(lm) {
+  const v = Math.abs(lm[159].y - lm[145].y);
+  const h = Math.abs(lm[33].x  - lm[133].x);
+  return h > 0 ? v / h : 0;
+}
+
+// ─── APP ──────────────────────────────────────────────────────────────────────
 function App() {
   const [screen, setScreen]           = useState("setup");
   const [mode, setMode]               = useState("front");
   const [statusType, setStatusType]   = useState("loading");
   const [statusTitle, setStatusTitle] = useState("Kamera bekleniyor...");
-  const [statusSub, setStatusSub]     = useState("İzin verin ve bekleyin");
+  const [statusSub, setStatusSub]     = useState("");
   const [sensitivity, setSensitivity] = useState(5);
   const [noFace, setNoFace]           = useState(false);
   const [flashActive, setFlashActive] = useState(false);
@@ -65,14 +94,13 @@ function App() {
 
   sensitivityRef.current = sensitivity;
   modeRef.current        = mode;
-
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
 
   const stopAlert = useCallback(() => {
     flashOn.current = false;
     setFlashActive(false);
     if (flashInterval.current) { clearInterval(flashInterval.current); flashInterval.current = null; }
-    try { torchTrack.current?.applyConstraints({ advanced: [{ torch: false }] }); } catch {}
+    try { torchTrack.current?.applyConstraints({ advanced:[{ torch:false }] }); } catch {}
   }, []);
 
   const startAlert = useCallback(() => {
@@ -84,7 +112,7 @@ function App() {
       let t = false;
       flashInterval.current = setInterval(async () => {
         t = !t;
-        try { await torchTrack.current?.applyConstraints({ advanced: [{ torch: t }] }); }
+        try { await torchTrack.current?.applyConstraints({ advanced:[{ torch:t }] }); }
         catch { clearInterval(flashInterval.current); setFlashActive(true); }
       }, 300);
     }
@@ -95,8 +123,7 @@ function App() {
     calibFrames.current  = [];
     isDistracted.current = false;
     stopAlert();
-    setCalibPct(0);
-    setNoFace(false);
+    setCalibPct(0); setNoFace(false);
     setStatusType("loading");
     setStatusTitle("Yeniden kalibre ediliyor...");
     setStatusSub("Secde noktasına bakın");
@@ -108,23 +135,19 @@ function App() {
       setNoFace(true);
       setStatusType("loading");
       setStatusTitle("Yüz algılanamıyor");
-      setStatusSub("Kameranızı yüzünüze doğrultun");
-      stopAlert();
-      return;
+      setStatusSub("Kamerayı biraz yaklaştırın");
+      stopAlert(); return;
     }
     setNoFace(false);
     const lm = results.multiFaceLandmarks[0];
-    const vert  = Math.abs(lm[159].y - lm[145].y);
-    const horiz = Math.abs(lm[33].x  - lm[133].x);
-    if (horiz > 0 && vert / horiz < 0.05) return;
+    if (eyeOpenRatio(lm) < 0.04) return; // göz kırpma
 
-    const iris = {
-      x: (lm[468].x + lm[473].x) / 2,
-      y: (lm[468].y + lm[473].y) / 2,
-    };
+    const gaze = getNormalizedGaze(lm);
+    if (!gaze) return;
 
+    // KALİBRASYON
     if (!baselineRef.current) {
-      calibFrames.current.push(iris);
+      calibFrames.current.push(gaze);
       const pct = Math.min(100, Math.round(calibFrames.current.length / CALIB_NEEDED * 100));
       setCalibPct(pct);
       setStatusTitle("Kalibre ediliyor...");
@@ -142,61 +165,49 @@ function App() {
       return;
     }
 
-    const thr  = 0.028 + (sensitivityRef.current - 1) * 0.016;
-    const dist = Math.abs(iris.x - baselineRef.current.x) > thr ||
-                 Math.abs(iris.y - baselineRef.current.y) > thr;
+    // SAPMA — hassasiyet 1=büyük eşik(toleranslı), 10=küçük eşik(hassas)
+    const thr  = 0.20 - (sensitivityRef.current - 1) * 0.015; // 0.20 → 0.065
+    const dist = Math.abs(gaze.x - baselineRef.current.x) > thr ||
+                 Math.abs(gaze.y - baselineRef.current.y) > thr;
 
     if (dist && !isDistracted.current) {
-      isDistracted.current = true;
-      startAlert();
-      setStatusType("distracted");
-      setStatusTitle("Dikkat Dağıldı!");
+      isDistracted.current = true; startAlert();
+      setStatusType("distracted"); setStatusTitle("Dikkat Dağıldı!");
       setStatusSub("Gözlerinizi secde noktasına çevirin");
     } else if (!dist && isDistracted.current) {
-      isDistracted.current = false;
-      stopAlert();
-      setStatusType("focused");
-      setStatusTitle("Huşu Aktif ✓");
+      isDistracted.current = false; stopAlert();
+      setStatusType("focused"); setStatusTitle("Huşu Aktif ✓");
       setStatusSub("Gözleriniz secde noktasında");
     }
   }, [startAlert, stopAlert]);
 
   const initMediaPipe = useCallback(async (videoEl) => {
-    setStatusTitle("Model yükleniyor...");
-    setStatusSub("Lütfen bekleyin");
+    setStatusTitle("Model yükleniyor..."); setStatusSub("Lütfen bekleyin");
     try {
       await loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js");
       await loadScript("https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js");
-      const fm = new window.FaceMesh({
-        locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`
-      });
-      fm.setOptions({ maxNumFaces:1, refineLandmarks:true, minDetectionConfidence:0.5, minTrackingConfidence:0.5 });
+      const fm = new window.FaceMesh({ locateFile: f => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}` });
+      fm.setOptions({ maxNumFaces:1, refineLandmarks:true, minDetectionConfidence:0.3, minTrackingConfidence:0.3 });
       fm.onResults(onResults);
       faceMeshRef.current = fm;
       const cam = new window.Camera(videoEl, {
-        onFrame: async () => { if (faceMeshRef.current) await faceMeshRef.current.send({ image: videoEl }); },
-        width: 640, height: 480
+        onFrame: async () => { if (faceMeshRef.current) await faceMeshRef.current.send({ image:videoEl }); },
+        width:1280, height:720
       });
-      cam.start();
-      mpCamRef.current = cam;
-      setStatusTitle("Kalibre ediliyor...");
-      setStatusSub("Secde noktasına bakın");
+      cam.start(); mpCamRef.current = cam;
+      setStatusType("loading"); setStatusTitle("Kalibre ediliyor..."); setStatusSub("Secde noktasına bakın");
     } catch(e) {
-      setStatusType("distracted");
-      setStatusTitle("Model Yüklenemedi");
-      setStatusSub(e.message);
+      setStatusType("distracted"); setStatusTitle("Model Yüklenemedi"); setStatusSub(e.message);
     }
   }, [onResults]);
 
   const startCamera = useCallback(async () => {
     if (!videoRef.current) return;
-    setCamError("");
-    setStatusType("loading");
-    setStatusTitle("Kamera açılıyor...");
-    setStatusSub("İzin isteği gönderildi");
+    setCamError(""); setNoFace(false);
+    setStatusType("loading"); setStatusTitle("Kamera açılıyor..."); setStatusSub("İzin isteği gönderildi");
     try {
       const s = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: modeRef.current === "rear" ? "environment" : "user", width:{ideal:640}, height:{ideal:480} }
+        video: { facingMode: modeRef.current==="rear" ? "environment" : "user", width:{ideal:1280}, height:{ideal:720} }
       });
       streamRef.current = s;
       if (modeRef.current === "rear") torchTrack.current = s.getVideoTracks()[0];
@@ -205,35 +216,27 @@ function App() {
       vid.onloadedmetadata = async () => { await vid.play(); await initMediaPipe(vid); };
     } catch(err) {
       const msg = err.name === "NotAllowedError"
-        ? "Kamera izni reddedildi.\n\nChrome'da: Adres çubuğu → 🔒 Kilit → Site Ayarları → Kamera → İzin Ver → Sayfayı yenile"
+        ? "Kamera izni reddedildi.\n\nChrome'da izin vermek için:\nAdres çubuğu → 🔒 Kilit → Site Ayarları → Kamera → İzin Ver → Sayfayı yenile"
         : err.message;
       setCamError(msg);
-      setStatusType("distracted");
-      setStatusTitle("Kamera Hatası");
-      setStatusSub("");
     }
   }, [initMediaPipe]);
 
   const stopApp = useCallback(() => {
     stopAlert();
-    mpCamRef.current?.stop();   mpCamRef.current = null;
-    faceMeshRef.current = null;
-    streamRef.current?.getTracks().forEach(t => t.stop());
-    streamRef.current = null;
-    torchTrack.current = null;
-    baselineRef.current = null;
-    calibFrames.current = [];
-    isDistracted.current = false;
-    setCalibPct(0); setNoFace(false); setCamError("");
-    setScreen("setup");
+    mpCamRef.current?.stop(); mpCamRef.current = null; faceMeshRef.current = null;
+    streamRef.current?.getTracks().forEach(t => t.stop()); streamRef.current = null;
+    torchTrack.current = null; baselineRef.current = null;
+    calibFrames.current = []; isDistracted.current = false;
+    setCalibPct(0); setNoFace(false); setCamError(""); setScreen("setup");
   }, [stopAlert]);
 
   useEffect(() => { if (screen === "camera") startCamera(); }, [screen]);
 
-  const dotColor = statusType === "focused" ? "#52b788" : statusType === "distracted" ? "#e74c3c" : "#d4ac0d";
+  const dotColor = statusType==="focused" ? "#52b788" : statusType==="distracted" ? "#e74c3c" : "#d4ac0d";
 
   return (
-    <div style={{ fontFamily:"'Tajawal','Segoe UI',sans-serif", background:"#0a0e0c", minHeight:"100vh", color:"#e8f5ee", position:"relative" }}>
+    <div style={{ fontFamily:"'Tajawal','Segoe UI',sans-serif", background:"#0a0e0c", minHeight:"100vh", color:"#e8f5ee" }}>
 
       {flashActive && (
         <div style={{ position:"fixed", inset:0, background:"white", zIndex:9999, pointerEvents:"none", animation:"flashPulse .5s ease-in-out infinite" }} />
@@ -286,16 +289,14 @@ function App() {
             <div style={{ fontSize:12, color:"#6b8f75", lineHeight:1.9 }}>
               Telefonu namaz kıldığınız yerin önüne koyun.<br/>
               Kalibrasyon sırasında <b style={{ color:"#e8f5ee" }}>secde edeceğiniz yere</b> bakın.<br/>
-              Gözleriniz o noktadan ayrılınca uyarı başlar.
+              <b style={{ color:"#e8f5ee" }}>Baş hareketleri görmezden gelinir</b>, sadece göz kasları takip edilir.
             </div>
           </div>
 
           <button onClick={() => setScreen("camera")} style={{
-            width:"100%", maxWidth:400, padding:18,
-            background:"linear-gradient(135deg,#2d6a4f,#40916c)",
-            border:"none", borderRadius:16, color:"white",
-            fontFamily:"inherit", fontSize:17, fontWeight:700, letterSpacing:1,
-            cursor:"pointer", boxShadow:"0 4px 24px rgba(45,106,79,.45)"
+            width:"100%", maxWidth:400, padding:18, background:"linear-gradient(135deg,#2d6a4f,#40916c)",
+            border:"none", borderRadius:16, color:"white", fontFamily:"inherit",
+            fontSize:17, fontWeight:700, letterSpacing:1, cursor:"pointer", boxShadow:"0 4px 24px rgba(45,106,79,.45)"
           }}>Başlat →</button>
         </div>
       )}
@@ -303,71 +304,62 @@ function App() {
       {/* ══ CAMERA ══ */}
       {screen === "camera" && (
         <div style={{ position:"fixed", inset:0, background:"#000" }}>
-          <video ref={videoRef} autoPlay playsInline muted
-            style={{ position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover",
-              transform: mode==="front" ? "scaleX(-1)" : "scaleX(1)" }} />
+          <video ref={videoRef} autoPlay playsInline muted style={{
+            position:"absolute", inset:0, width:"100%", height:"100%", objectFit:"cover",
+            transform: mode==="front" ? "scaleX(-1)" : "scaleX(1)" }} />
 
-          {/* Top bar */}
           <div style={{ position:"absolute", top:0, left:0, right:0, padding:"48px 20px 16px",
             background:"linear-gradient(to bottom,rgba(0,0,0,.75),transparent)",
             display:"flex", alignItems:"center", justifyContent:"space-between", zIndex:10 }}>
-            <div onClick={stopApp} style={{ width:42, height:42, borderRadius:"50%",
-              background:"rgba(255,255,255,.15)", border:"1px solid rgba(255,255,255,.2)",
-              display:"flex", alignItems:"center", justifyContent:"center",
+            <div onClick={stopApp} style={{ width:42, height:42, borderRadius:"50%", background:"rgba(255,255,255,.15)",
+              border:"1px solid rgba(255,255,255,.2)", display:"flex", alignItems:"center", justifyContent:"center",
               fontSize:20, color:"white", cursor:"pointer" }}>←</div>
-            <div style={{ background:"rgba(0,0,0,.5)", border:"1px solid rgba(255,255,255,.15)",
-              borderRadius:20, padding:"6px 16px", fontSize:11, color:"rgba(255,255,255,.8)", letterSpacing:1.5 }}>
+            <div style={{ background:"rgba(0,0,0,.5)", border:"1px solid rgba(255,255,255,.15)", borderRadius:20,
+              padding:"6px 16px", fontSize:11, color:"rgba(255,255,255,.8)", letterSpacing:1.5 }}>
               {mode==="front" ? "ÖN KAMERA" : "ARKA KAMERA"}
             </div>
-            <div onClick={resetCalib} style={{ width:42, height:42, borderRadius:"50%",
-              background:"rgba(255,255,255,.15)", border:"1px solid rgba(255,255,255,.2)",
-              display:"flex", alignItems:"center", justifyContent:"center",
+            <div onClick={resetCalib} style={{ width:42, height:42, borderRadius:"50%", background:"rgba(255,255,255,.15)",
+              border:"1px solid rgba(255,255,255,.2)", display:"flex", alignItems:"center", justifyContent:"center",
               fontSize:18, cursor:"pointer" }}>🎯</div>
           </div>
 
-          {/* Camera error */}
           {camError && (
             <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", zIndex:20, padding:24 }}>
-              <div style={{ background:"rgba(0,0,0,.9)", border:"1px solid rgba(255,80,80,.3)", borderRadius:20, padding:"28px 24px", textAlign:"center", maxWidth:320 }}>
+              <div style={{ background:"rgba(0,0,0,.92)", border:"1px solid rgba(255,80,80,.3)", borderRadius:20, padding:"28px 24px", textAlign:"center", maxWidth:320 }}>
                 <div style={{ fontSize:36, marginBottom:12 }}>🚫</div>
                 <div style={{ fontSize:15, fontWeight:600, marginBottom:12 }}>Kamera Erişimi Yok</div>
                 <div style={{ fontSize:12, color:"rgba(255,255,255,.65)", lineHeight:1.8, whiteSpace:"pre-line", marginBottom:20 }}>{camError}</div>
-                <button onClick={startCamera} style={{ padding:"12px 28px", background:"#2d6a4f", border:"none", borderRadius:12, color:"white", fontFamily:"inherit", fontSize:14, fontWeight:600, cursor:"pointer" }}>
-                  Tekrar Dene
-                </button>
+                <button onClick={startCamera} style={{ padding:"12px 28px", background:"#2d6a4f", border:"none", borderRadius:12, color:"white", fontFamily:"inherit", fontSize:14, fontWeight:600, cursor:"pointer" }}>Tekrar Dene</button>
               </div>
             </div>
           )}
 
-          {/* Calibration */}
           {!camError && calibPct < 100 && (
-            <div style={{ position:"absolute", top:"40%", left:"50%", transform:"translate(-50%,-50%)", zIndex:10, textAlign:"center", width:220 }}>
+            <div style={{ position:"absolute", top:"40%", left:"50%", transform:"translate(-50%,-50%)", zIndex:10, textAlign:"center", width:230 }}>
               <div style={{ fontSize:38, animation:"bounce 1s infinite", marginBottom:10 }}>👁️</div>
-              <div style={{ background:"rgba(0,0,0,.65)", borderRadius:20, padding:"10px 20px", fontSize:13, color:"rgba(255,255,255,.9)", marginBottom:10 }}>
+              <div style={{ background:"rgba(0,0,0,.7)", borderRadius:20, padding:"12px 20px", fontSize:13, color:"rgba(255,255,255,.9)", marginBottom:12 }}>
                 Secde noktasına bakın<br/>
-                <b style={{ color:"#52b788" }}>%{calibPct}</b>
+                <b style={{ color:"#52b788", fontSize:18 }}>%{calibPct}</b>
               </div>
-              <div style={{ width:"100%", height:4, background:"rgba(255,255,255,.15)", borderRadius:2 }}>
-                <div style={{ width:`${calibPct}%`, height:"100%", background:"#52b788", borderRadius:2, transition:"width .1s" }} />
+              <div style={{ width:"100%", height:5, background:"rgba(255,255,255,.15)", borderRadius:3 }}>
+                <div style={{ width:`${calibPct}%`, height:"100%", background:"linear-gradient(90deg,#2d6a4f,#52b788)", borderRadius:3, transition:"width .15s" }} />
               </div>
             </div>
           )}
 
-          {/* No face */}
           {noFace && !camError && (
             <div style={{ position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center", zIndex:8 }}>
-              <div style={{ background:"rgba(0,0,0,.7)", border:"1px solid rgba(255,255,255,.15)", borderRadius:20, padding:"24px 32px", textAlign:"center" }}>
+              <div style={{ background:"rgba(0,0,0,.75)", border:"1px solid rgba(255,255,255,.15)", borderRadius:20, padding:"24px 32px", textAlign:"center" }}>
                 <div style={{ fontSize:40, marginBottom:8 }}>🕌</div>
                 <div style={{ fontSize:15, fontWeight:500 }}>Yüz algılanamıyor</div>
-                <div style={{ fontSize:12, color:"rgba(255,255,255,.5)", marginTop:4 }}>Kameranızı ayarlayın</div>
+                <div style={{ fontSize:12, color:"rgba(255,255,255,.5)", marginTop:4 }}>Kamerayı biraz yaklaştırın</div>
               </div>
             </div>
           )}
 
-          {/* Distracted */}
           {statusType === "distracted" && !camError && (
             <div style={{ position:"absolute", top:"36%", left:"50%", transform:"translateX(-50%)", zIndex:11, pointerEvents:"none" }}>
-              <div style={{ background:"rgba(192,57,43,.88)", borderRadius:20, padding:"14px 28px",
+              <div style={{ background:"rgba(192,57,43,.9)", borderRadius:20, padding:"14px 32px",
                 border:"1px solid rgba(255,100,100,.4)", animation:"pulsefast .6s infinite", textAlign:"center" }}>
                 <div style={{ fontSize:22, fontWeight:700 }}>⚠️ Dikkat Dağıldı</div>
                 <div style={{ fontSize:12, color:"rgba(255,255,255,.85)", marginTop:4 }}>Secde noktasına dönün</div>
@@ -375,24 +367,21 @@ function App() {
             </div>
           )}
 
-          {/* Bottom panel */}
-          <div style={{ position:"absolute", bottom:0, left:0, right:0, padding:"20px 20px 40px",
-            background:"linear-gradient(to top,rgba(0,0,0,.9),transparent)", zIndex:10 }}>
-            <div style={{ display:"flex", alignItems:"center", gap:14,
-              background:"rgba(0,0,0,.5)", borderRadius:16, padding:"16px 18px",
-              border:"1px solid rgba(255,255,255,.08)", marginBottom:16 }}>
-              <div style={{ width:14, height:14, borderRadius:"50%", flexShrink:0,
-                background:dotColor, boxShadow:`0 0 10px ${dotColor}`,
-                animation:`${statusType==="distracted"?"pulsefast .5s":"pulse 2s"} infinite` }} />
+          <div style={{ position:"absolute", bottom:0, left:0, right:0, padding:"20px 20px 44px",
+            background:"linear-gradient(to top,rgba(0,0,0,.92),transparent)", zIndex:10 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:14, background:"rgba(0,0,0,.55)",
+              borderRadius:16, padding:"16px 18px", border:"1px solid rgba(255,255,255,.08)", marginBottom:16 }}>
+              <div style={{ width:14, height:14, borderRadius:"50%", flexShrink:0, background:dotColor,
+                boxShadow:`0 0 10px ${dotColor}`, animation:`${statusType==="distracted"?"pulsefast .5s":"pulse 2s"} infinite` }} />
               <div style={{ flex:1 }}>
                 <div style={{ fontSize:15, fontWeight:600 }}>{statusTitle}</div>
                 <div style={{ fontSize:12, color:"rgba(255,255,255,.5)", marginTop:2 }}>{statusSub}</div>
               </div>
             </div>
             <div style={{ display:"flex", alignItems:"center", gap:12 }}>
-              <span style={{ fontSize:12, color:"rgba(255,255,255,.4)", whiteSpace:"nowrap" }}>Az Hassas</span>
+              <span style={{ fontSize:11, color:"rgba(255,255,255,.4)", whiteSpace:"nowrap" }}>Az Hassas</span>
               <input type="range" min={1} max={10} value={sensitivity} onChange={e => setSensitivity(+e.target.value)} />
-              <span style={{ fontSize:12, color:"rgba(255,255,255,.4)", whiteSpace:"nowrap" }}>Çok Hassas</span>
+              <span style={{ fontSize:11, color:"rgba(255,255,255,.4)", whiteSpace:"nowrap" }}>Çok Hassas</span>
             </div>
           </div>
         </div>
@@ -401,8 +390,7 @@ function App() {
   );
 }
 
-const root = ReactDOM.createRoot(document.getElementById("root"));
-root.render(<App />);
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
 </script>
 </body>
 </html>
